@@ -1,8 +1,8 @@
 {
-  "recaudado": 860000,
+  "recaudado": 2300000,
   "meta": 3000000,
-  "faltante": 2140000,
-  "porcentaje": 28.67,
-  "version": "860000",
-  "url_compartir_recomendada": "https://plravelor.github.io/fondo-melany/?v=860000"
+  "porcentaje": 76.67,
+  "faltante": 700000,
+  "url_compartir_recomendada": "https://plravelor.github.io/fondo-melany/",
+  "imagen_publica": "https://plravelor.github.io/fondo-melany/assets/og-portada-auto.jpg"
 }
