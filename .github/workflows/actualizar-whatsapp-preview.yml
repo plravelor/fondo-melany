@@ -1,0 +1,47 @@
+name: Actualizar vista previa de WhatsApp
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/30 * * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  generar-preview:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clonar repositorio
+        uses: actions/checkout@v4
+
+      - name: Instalar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install pillow requests beautifulsoup4 openpyxl
+
+      - name: Generar imagen OG y actualizar index.html
+        env:
+          SHEET_CSV_URL: ${{ secrets.SHEET_CSV_URL }}
+          META_TOTAL: "3000000"
+          URL_BASE: "https://plravelor.github.io/fondo-melany/"
+          SITIO_TITULO: "Apoyemos a Melany a presentar su investigación en Brasil"
+          SITIO_DESCRIPCION: "Conoce cuánto llevamos recaudado, las metas parciales y cómo colaborar. Los aportes se reciben directamente por Nequi, Bre-B y Bancolombia."
+        run: python scripts/generar_preview_whatsapp.py
+
+      - name: Hacer commit si hubo cambios
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html assets/og-portada-auto.png assets/og-portada-auto.jpg assets/ultimo-dato.json
+          if git diff --cached --quiet; then
+            echo "No hubo cambios para commitear"
+          else
+            git commit -m "Actualiza vista previa de WhatsApp y monto recaudado"
+            git push
+          fi
