@@ -9,6 +9,7 @@
   const money = x => new Intl.NumberFormat('es-CO', {style:'currency', currency:'COP', maximumFractionDigits:0}).format(x).replace(/\s*COP\s*/g,'').replace(/\u00a0/g,'');
   const pct = x => (x * 100).toLocaleString('es-CO', {maximumFractionDigits:1}) + ' %';
   let actual = manual;
+  let datosGoogleConfirmados = false;
   let currentSuggestion = 50000;
   let toastTimer;
 
@@ -16,7 +17,7 @@
     const t = el('toast'); t.textContent = message; t.classList.add('show');
     clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2800);
   }
-  async function copyText(value) {
+  async function copyText(value, mensajeExito = 'Copiado. Verifica los datos antes de transferir.') {
     try {
       if (navigator.clipboard && window.isSecureContext) await navigator.clipboard.writeText(value);
       else {
@@ -25,7 +26,7 @@
         if (!document.execCommand('copy')) throw new Error('No se pudo copiar');
         area.remove();
       }
-      flash('Copiado. Verifica los datos antes de transferir.');
+      flash(mensajeExito);
     } catch (err) { flash('No se pudo copiar. Mantén presionado el dato para copiarlo.'); }
   }
   const hitos = (Array.isArray(cfg.hitos) ? cfg.hitos : [500000,1000000,2000000,meta]).map(num).filter(x=>x>0).sort((a,b)=>a-b);
@@ -49,6 +50,7 @@
   }
   function render(total,source) {
     actual = num(total);
+    datosGoogleConfirmados = source === 'google';
     const progress=actual/meta;
     el('recaudado').textContent=money(actual);
     el('meta').textContent=money(meta);
@@ -95,10 +97,16 @@
       });renderSuggestion();
     }));
   }
+  function mensajeParaCompartir() {
+    const mensaje = 'Apoyemos a Melany Queeman a presentar su investigación sobre el Vireo caribaeus en Brasil. Consulta la meta, el avance y cómo aportar: https://plravelor.github.io/fondo-melany/';
+    // Solo añadimos el monto si Google Sheets se consultó correctamente.
+    // Así evitamos divulgar el valor de respaldo guardado en config.js (que puede ser antiguo).
+    return datosGoogleConfirmados
+      ? `${mensaje}\n\nRecaudado hasta ahora: ${money(actual)} de ${money(meta)}.`
+      : mensaje;
+  }
   function share() {
-    const url=location.href.split('#')[0].split('?')[0];
-    const txt=`Apoyemos a Melany Queeman a presentar su investigación sobre el Vireo caribaeus en Brasil. Consulta la meta, el avance y cómo aportar: ${url}`;
-    window.open(`https://wa.me/?text=${encodeURIComponent(txt)}`,'_blank','noopener,noreferrer');
+    window.open(`https://wa.me/?text=${encodeURIComponent(mensajeParaCompartir())}`,'_blank','noopener,noreferrer');
   }
   function loadSheet(){
     // Solo lee una celda de una hoja PÚBLICA dedicada exclusivamente al total.
@@ -123,7 +131,7 @@
   function init(){
     render(manual,'manual');payments();initOptions();loadSheet();
     el('share').addEventListener('click',share);
-    el('copy-link').addEventListener('click',()=>copyText(location.href.split('?')[0].split('#')[0]));
+    el('copy-link').addEventListener('click',()=>copyText(mensajeParaCompartir(), 'Mensaje completo copiado para compartir.'));
   }
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
 })();
