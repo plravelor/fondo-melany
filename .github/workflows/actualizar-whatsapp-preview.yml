@@ -1,47 +1,61 @@
-name: Actualizar vista previa de WhatsApp
+name: Actualizar imagen y publicar sitio (misma URL)
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
   schedule:
-    - cron: "*/30 * * * *"
+    - cron: '*/15 * * * *'
+
+concurrency:
+  group: fondo-melany-pagina
+  cancel-in-progress: false
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  generar-preview:
+  construir:
     runs-on: ubuntu-latest
     steps:
-      - name: Clonar repositorio
-        uses: actions/checkout@v4
-
-      - name: Instalar Python
-        uses: actions/setup-python@v5
+      - name: Descargar repositorio
+        uses: actions/checkout@v5
+      - name: Preparar Python
+        uses: actions/setup-python@v6
         with:
-          python-version: "3.11"
-
+          python-version: '3.11'
       - name: Instalar dependencias
-        run: |
-          python -m pip install --upgrade pip
-          pip install pillow requests beautifulsoup4 openpyxl
-
-      - name: Generar imagen OG y actualizar index.html
+        run: pip install pillow requests
+      - name: Crear imagen fija desde Google Sheets
         env:
           SHEET_CSV_URL: ${{ secrets.SHEET_CSV_URL }}
-          META_TOTAL: "3000000"
-          URL_BASE: "https://plravelor.github.io/fondo-melany/"
-          SITIO_TITULO: "Apoyemos a Melany a presentar su investigación en Brasil"
-          SITIO_DESCRIPCION: "Conoce cuánto llevamos recaudado, las metas parciales y cómo colaborar. Los aportes se reciben directamente por Nequi, Bre-B y Bancolombia."
         run: python scripts/generar_preview_whatsapp.py
-
-      - name: Hacer commit si hubo cambios
+      - name: Preparar archivos publicos
+        shell: bash
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add index.html assets/og-portada-auto.png assets/og-portada-auto.jpg assets/ultimo-dato.json
-          if git diff --cached --quiet; then
-            echo "No hubo cambios para commitear"
-          else
-            git commit -m "Actualiza vista previa de WhatsApp y monto recaudado"
-            git push
-          fi
+          mkdir -p _site
+          cp index.html estilos.css config.js app.js _site/
+          cp -R assets _site/
+          touch _site/.nojekyll
+          test -f _site/assets/og-portada-auto.jpg
+          test -f _site/assets/ultimo-dato.json
+      - name: Configurar GitHub Pages
+        uses: actions/configure-pages@v5
+      - name: Subir archivos publicos
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+
+  publicar:
+    needs: construir
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Publicar en GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
