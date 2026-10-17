@@ -1,160 +1,180 @@
-import csv, io, json, math, os, re
-from datetime import datetime, timezone
+#!/usr/bin/env python3
+"""Actualiza una única imagen de WhatsApp y la misma URL de campaña.
+
+Nota: actualizar Open Graph NO fuerza a WhatsApp a refrescar una vista previa
+que haya guardado. Este script no crea URLs adicionales ni páginas /share/.
+"""
+import argparse
+import csv
+import html
+import io
+import json
+import os
+import re
 from pathlib import Path
+from datetime import datetime, timezone
 
 import requests
 from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1]
-INDEX = ROOT / 'index.html'
 ASSETS = ROOT / 'assets'
-ASSETS.mkdir(exist_ok=True, parents=True)
-
+INDEX = ROOT / 'index.html'
+URL_BASE = 'https://plravelor.github.io/fondo-melany/'
+GOAL = 3_000_000
 CSV_URL = os.environ.get('SHEET_CSV_URL', '').strip()
-META_TOTAL = int(os.environ.get('META_TOTAL', '3000000'))
-URL_BASE = os.environ.get('URL_BASE', 'https://plravelor.github.io/fondo-melany/')
-SITIO_TITULO = os.environ.get('SITIO_TITULO', 'Apoyemos a Melany')
-SITIO_DESCRIPCION = os.environ.get('SITIO_DESCRIPCION', 'Conoce cuánto llevamos recaudado')
+MILESTONES = (500_000, 1_000_000, 2_000_000, GOAL)
 
-def money(n:int)->str:
-    return '$' + f"{n:,}".replace(',', '.')
+def pesos(n):
+    return '$' + format(n, ',').replace(',', '.')
 
-def pct_str(v, total):
-    p = (v / total * 100) if total else 0
-    s = f"{p:.1f}".replace('.', ',')
-    if s.endswith(',0'):
-        s = s[:-2]
-    return s
 
-def read_recaudado():
-    if not CSV_URL:
-        raise RuntimeError('No existe la variable SHEET_CSV_URL en Secrets')
-    r = requests.get(CSV_URL, timeout=30)
-    r.raise_for_status()
-    content = r.content.decode('utf-8-sig', errors='replace')
+def porcentaje(n, total):
+    return format((100 * n / total) if total else 0, '.1f').replace('.', ',') + '%'
+
+
+def sheet_amount():
+    if not CSV_URL.startswith('https://'):
+        raise RuntimeError('Configura SHEET_CSV_URL con el enlace CSV publicado de Google Sheets.')
+    response = requests.get(CSV_URL, timeout=35, headers={'User-Agent': 'MelanyCampaignCard/2.0'})
+    response.raise_for_status()
+    content = response.content.decode('utf-8-sig')
+    if content.lstrip().startswith('<!DOCTYPE html') or content.lstrip().startswith('<html'):
+        raise RuntimeError('Google Sheets devolvió HTML, no CSV. Verifica Publicar en la Web → CSV.')
     reader = csv.DictReader(io.StringIO(content))
     for row in reader:
-        concepto = (row.get('Concepto') or row.get('concepto') or '').strip().lower()
-        if concepto == 'recaudado':
-            raw = str(row.get('Valor') or row.get('valor') or '').strip()
-            raw = raw.replace('$','').replace('.','').replace(',','')
-            return int(raw)
-    raise RuntimeError('No se encontró la fila Concepto=Recaudado en la hoja PUBLICO')
+        fields = {str(k or '').strip().lower(): str(v or '').strip() for k, v in row.items()}
+        if fields.get('concepto', '').lower() == 'recaudado':
+            amount = re.sub(r'[^0-9]', '', fields.get('valor', ''))
+            if not amount:
+                raise ValueError('El valor de Recaudado está vacío o no es numérico.')
+            return int(amount)
+    raise ValueError('El CSV no contiene la fila Concepto=Recaudado y la columna Valor.')
 
-def load_font(size, bold=False):
-    candidates = [
-        '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf' if bold else '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
-        '/Library/Fonts/Arial Unicode.ttf'
-    ]
-    for c in candidates:
-        if Path(c).exists():
-            return ImageFont.truetype(c, size)
-    return ImageFont.load_default()
 
-def draw_text(draw, xy, text, font, fill, anchor='la'):
-    draw.text(xy, text, font=font, fill=fill, anchor=anchor)
+def font(size, bold=False):
+    family = 'DejaVuSans-Bold.ttf' if bold else 'DejaVuSans.ttf'
+    for p in [f'/usr/share/fonts/truetype/dejavu/{family}', f'/usr/local/share/fonts/{family}']:
+        if Path(p).exists():
+            return ImageFont.truetype(p, size)
+    return ImageFont.truetype(family, size)
 
-def generate_image(recaudado:int):
-    W,H = 1200,630
-    img = Image.new('RGB',(W,H),(7,18,20))
+
+def draw_card(amount):
+    W, H = 1200, 630
+    bg = '#081719'
+    bright = '#55eab0'
+    muted = '#a0babc'
+    white = '#f5fbf9'
+    img = Image.new('RGB', (W, H), bg)
     d = ImageDraw.Draw(img)
+    d.rounded_rectangle((25, 24, 1174, 606), 34, fill='#0b2426', outline='#1d4546', width=3)
+    d.rounded_rectangle((55, 49, 353, 96), 23, fill='#1b4240')
+    d.text((78, 61), 'FONDO DE MOVILIDAD', font=font(22, True), fill=white)
+    d.text((1131, 60), '19–24 oct. 2026', font=font(24), fill='#daeae5', anchor='ra')
+    d.text((60, 132), 'Apoyemos a Melany', font=font(47, True), fill=white)
+    d.text((60, 189), 'a presentar su investigación en Brasil', font=font(35, True), fill=bright)
 
-    # soft panels
-    d.rounded_rectangle((30,30,W-30,H-30), radius=30, fill=(9,22,24), outline=(26,59,61), width=2)
-    # header tag
-    d.rounded_rectangle((55,55,310,95), radius=18, fill=(24,54,56))
+    # Indicador circular general, limitado a 100% visual aunque exceda el total.
+    center = (174, 372)
+    r = 105
+    box = (center[0]-r, center[1]-r, center[0]+r, center[1]+r)
+    d.arc(box, 0, 359.8, fill='#486a69', width=19)
+    fraction = min(1.0, amount / GOAL) if GOAL else 0
+    if fraction > 0:
+        d.arc(box, -90, -90 + 359.7 * fraction, fill=bright, width=19)
+    d.text((center[0], center[1]-12), porcentaje(amount, GOAL), font=font(39, True), fill=white, anchor='mm')
+    d.text((center[0], center[1]+28), 'alcanzado', font=font(20), fill=muted, anchor='mm')
 
-    c_green=(83,234,175)
-    c_green2=(48,210,146)
-    c_text=(236,243,244)
-    c_muted=(163,180,181)
-    c_panel=(18,33,35)
+    d.text((330, 265), 'RECAUDADO', font=font(19, True), fill=muted)
+    d.text((330, 302), pesos(amount), font=font(57, True), fill=bright)
+    d.text((330, 394), 'Meta: ' + pesos(GOAL), font=font(31, True), fill=white)
+    d.text((330, 441), 'Faltan ' + pesos(max(0, GOAL - amount)), font=font(28), fill=muted)
 
-    font_sm=load_font(20, bold=True)
-    font_md=load_font(28, bold=False)
-    font_h1=load_font(40, bold=True)
-    font_h2=load_font(30, bold=True)
-    font_num=load_font(56, bold=True)
-    font_num2=load_font(46, bold=True)
-    font_bigpct=load_font(40, bold=True)
-    font_small=load_font(18, bold=False)
-
-    draw_text(d,(85,75),'FONDO DE MOVILIDAD',font_sm,c_text,'lm')
-    draw_text(d,(1090,75),'19–24 oct. 2026',font_md,c_text,'rm')
-
-    draw_text(d,(60,140),'Apoyemos a Melany',font_h1,c_text)
-    draw_text(d,(60,192),'en Brasil',font_h1,c_green)
-
-    # Donut
-    cx,cy,r = 170,335,92
-    d.ellipse((cx-r,cy-r,cx+r,cy+r), outline=(69,87,88), width=18)
-    pct = max(0, min(1, recaudado / META_TOTAL if META_TOTAL else 0))
-    start = -90
-    end = start + 360*pct
-    d.arc((cx-r,cy-r,cx+r,cy+r), start=start, end=end, fill=c_green, width=18)
-    draw_text(d,(cx,cy-5), pct_str(recaudado,META_TOTAL)+' %', font_bigpct, c_text, 'mm')
-    draw_text(d,(cx,cy+35), 'alcanzado', load_font(20,False), c_text, 'mm')
-
-    # amounts
-    draw_text(d,(330,250),'RECAUDADO',font_small,c_muted)
-    draw_text(d,(330,285),money(recaudado),font_num,c_green)
-    draw_text(d,(330,370),f'Meta: {money(META_TOTAL)}',font_h2,c_text)
-    faltan=max(META_TOTAL-recaudado,0)
-    draw_text(d,(330,420),f'Faltan {money(faltan)}',font_h2,c_muted)
-
-    # progress bar first milestone
-    first_goal=500000
-    partial=min(recaudado/first_goal if first_goal else 0, 1)
-    d.rounded_rectangle((55,500,1145,570), radius=24, fill=c_panel)
-    draw_text(d,(80,523),'Primera meta: $500.000',font_small,c_text)
-    draw_text(d,(965,523),f'{int(round(partial*100))} % alcanzado',font_small,c_text)
-    d.rounded_rectangle((80,545,1120,560), radius=8, fill=(64,74,75))
-    d.rounded_rectangle((80,545,80+int((1120-80)*partial),560), radius=8, fill=c_green2)
-
+    # Siguiente meta pendiente, no un objetivo anterior ya cumplido.
+    next_goal = next((x for x in MILESTONES if amount < x), None)
+    d.rounded_rectangle((56, 517, 1143, 583), 19, fill='#173536')
+    if next_goal:
+        text_label = 'PRÓXIMO OBJETIVO: ' + pesos(next_goal)
+        next_pct = min(1, amount / next_goal)
+        note = porcentaje(amount, next_goal) + ' alcanzado'
+    else:
+        text_label = '¡META GENERAL ALCANZADA!'
+        next_pct = 1
+        note = '100%'
+    d.text((76, 527), text_label, font=font(20, True), fill=white)
+    d.text((1120, 527), note, font=font(19, True), fill=bright, anchor='ra')
+    d.rounded_rectangle((77, 556, 1120, 569), 7, fill='#4c6867')
+    width = round(1043 * next_pct)
+    if width > 0:
+        d.rounded_rectangle((77, 556, 77+max(width, 12), 569), 7, fill=bright)
     return img
 
-def replace_meta_content(html: str, attribute: str, name: str, value: str) -> str:
-    """Sustituye solo el atributo content, conservando la etiqueta HTML completa."""
-    pattern = rf'(<meta\s+{re.escape(attribute)}="{re.escape(name)}"\s+content=")[^"]*(">)'
-    updated, count = re.subn(pattern, lambda m: m.group(1) + value + m.group(2), html, count=1)
-    if count != 1:
-        raise RuntimeError(f'No se encontró una etiqueta HTML válida: {attribute}={name}. No se modificó index.html.')
+
+
+
+def replace_or_insert_meta(page: str, selector: str, key: str, value: str) -> str:
+    """Sustituye el valor sin alterar la etiqueta, evitando referencias \1 en re.sub."""
+    tag_re = rf'<meta\s+{selector}="{re.escape(key)}"\s+content="[^"]*"\s*/?>'
+    tag = f'<meta {selector}="{key}" content="{html.escape(value, quote=True)}">'
+    updated, n = re.subn(tag_re, lambda _: tag, page, count=1, flags=re.I)
+    if not n:
+        if '</head>' not in page:
+            raise RuntimeError('index.html no contiene </head>; se cancela actualización')
+        updated = page.replace('</head>', f'  {tag}\n</head>', 1)
     return updated
 
 
-def update_index(version: str):
-    html = INDEX.read_text(encoding='utf-8')
-    image_url = f"{URL_BASE}assets/og-portada-auto.png?v={version}"
-    public_url = f"{URL_BASE}?v={version}"
-    description = f"Hemos recaudado {money(RECAUDADO)} de {money(META_TOTAL)}. Consulta el avance y cómo aportar."
-    for attribute, name, value in [
-        ('name', 'description', description),
-        ('property', 'og:description', description),
-        ('property', 'og:image', image_url),
-        ('property', 'og:url', public_url),
-        ('name', 'twitter:image', image_url),
-    ]:
-        html = replace_meta_content(html, attribute, name, value)
-    pattern = r'(<link\s+rel="canonical"\s+href=")[^"]*(">)'
-    html, count = re.subn(pattern, lambda m: m.group(1) + URL_BASE + m.group(2), html, count=1)
-    if count != 1:
-        raise RuntimeError('Falta la etiqueta canonical. No se modificó index.html.')
-    INDEX.write_text(html, encoding='utf-8')
+def update_index(amount: int):
+    page = INDEX.read_text('utf-8')
+    # URL y og:image FIJOS. No hay ?v=, /share/ ni rutas nuevas.
+    img_url = URL_BASE + 'assets/og-portada-auto.jpg'
+    desc = f'Hemos recaudado {pesos(amount)} de {pesos(GOAL)}. Consulta el avance y cómo aportar.'
+    changes = [
+        ('name','description',desc),
+        ('property','og:description',desc),
+        ('property','og:image',img_url),
+        ('property','og:image:secure_url',img_url),
+        ('property','og:image:type','image/jpeg'),
+        ('property','og:image:width','1200'),
+        ('property','og:image:height','630'),
+        ('property','og:url',URL_BASE),
+        ('name','twitter:image',img_url),
+    ]
+    for selector,key,value in changes:
+        page=replace_or_insert_meta(page,selector,key,value)
+    # La URL canónica también queda fija.
+    canonical='<link rel="canonical" href="'+URL_BASE+'">'
+    page,n=re.subn(r'<link\s+rel="canonical"\s+href="[^"]*"\s*/?>', lambda _: canonical, page, count=1)
+    if n==0:
+        page=page.replace('</head>', '  '+canonical+'\n</head>',1)
+    if '\x01' in page or '\x02' in page:
+        raise RuntimeError('HTML tiene caracteres de control: restaurar index.html')
+    INDEX.write_text(page,encoding='utf-8')
 
-RECAUDADO = read_recaudado()
-VERSION = str(RECAUDADO)  # La misma cifra conserva la misma version
-img = generate_image(RECAUDADO)
-img.save(ASSETS/'og-portada-auto.png')
-img.convert('RGB').save(ASSETS/'og-portada-auto.jpg', quality=92)
-(ASSETS/'ultimo-dato.json').write_text(json.dumps({
-    'recaudado': RECAUDADO,
-    'meta': META_TOTAL,
-    'faltante': max(META_TOTAL-RECAUDADO, 0),
-    'porcentaje': round((RECAUDADO / META_TOTAL * 100) if META_TOTAL else 0, 2),
-    'version': VERSION,
-    'url_compartir_recomendada': f'{URL_BASE}?v={VERSION}'
-}, ensure_ascii=False, indent=2), encoding='utf-8')
-update_index(VERSION)
-print('Recaudado leído:', RECAUDADO)
-print('Versión:', VERSION)
-print('Comparte preferiblemente:', f'{URL_BASE}?v={VERSION}')
+
+def main(amount):
+    if not (0 <= amount <= 100_000_000):
+        raise ValueError('El recaudo parece incorrecto; no se publica.')
+    ASSETS.mkdir(exist_ok=True, parents=True)
+    card=draw_card(amount)
+    path=ASSETS/'og-portada-auto.jpg'
+    card.convert('RGB').save(path, 'JPEG', quality=82, optimize=True, progressive=False)
+    update_index(amount)
+    data={'recaudado':amount,'meta':GOAL,
+          'porcentaje':round(amount/GOAL*100,2),
+          'faltante':max(0,GOAL-amount),
+          'url_compartir_recomendada':URL_BASE,
+          'imagen_publica': URL_BASE+'assets/og-portada-auto.jpg'}
+    (ASSETS/'ultimo-dato.json').write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n','utf-8')
+    print(f'Monto publicado: {pesos(amount)} de {pesos(GOAL)}')
+    print(f'Imagen: {path} ({path.stat().st_size//1024} KB)')
+    print('Compartir siempre: '+URL_BASE)
+    print('Importante: WhatsApp puede conservar miniaturas anteriores en su caché.')
+
+
+if __name__=='__main__':
+    p=argparse.ArgumentParser()
+    p.add_argument('--test-amount', type=int, help='Prueba local; NO usar en Github Actions')
+    opts=p.parse_args()
+    main(opts.test_amount if opts.test_amount is not None else sheet_amount())
