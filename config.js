@@ -7,7 +7,7 @@
 window.CAMPANA = {
   nombre: "Melany Queeman",
   meta: 3000000,
-  recaudadoManual: 200000,
+  recaudadoManual: 500000,
   sheetId: "",
   sheetName: "PUBLICO",
   fechas: "19–24 de octubre de 2026",
