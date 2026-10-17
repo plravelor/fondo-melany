@@ -113,22 +113,36 @@ def generate_image(recaudado:int):
 
     return img
 
-def update_index(version:str):
+def replace_meta_content(html: str, attribute: str, name: str, value: str) -> str:
+    """Sustituye solo el atributo content, conservando la etiqueta HTML completa."""
+    pattern = rf'(<meta\s+{re.escape(attribute)}="{re.escape(name)}"\s+content=")[^"]*(">)'
+    updated, count = re.subn(pattern, lambda m: m.group(1) + value + m.group(2), html, count=1)
+    if count != 1:
+        raise RuntimeError(f'No se encontró una etiqueta HTML válida: {attribute}={name}. No se modificó index.html.')
+    return updated
+
+
+def update_index(version: str):
     html = INDEX.read_text(encoding='utf-8')
-    img_url = f"{URL_BASE}assets/og-portada-auto.png?v={version}"
-    jpg_url = f"{URL_BASE}assets/og-portada-auto.jpg?v={version}"
-    # choose png for og and twitter
-    html = re.sub(r'(<meta property="og:image" content=")[^"]+("\s*/?>)', rf'{img_url}', html)
-    html = re.sub(r'(<meta name="twitter:image" content=")[^"]+("\s*/?>)', rf'{img_url}', html)
-    html = re.sub(r'(<meta property="og:url" content=")[^"]+("\s*/?>)', rf'{URL_BASE}?v={version}', html)
-    html = re.sub(r'(<link rel="canonical" href=")[^"]+("\s*/?>)', rf'{URL_BASE}?v={version}', html)
-    # optional description with current amount
-    html = re.sub(r'(<meta property="og:description" content=")[^"]+("\s*/?>)', rf'Hemos recaudado {money(RECAUDADO)} de {money(META_TOTAL)}. Entra para ver el avance y cómo aportar.', html)
-    html = re.sub(r'(<meta name="description" content=")[^"]+("\s*/?>)', rf'Hemos recaudado {money(RECAUDADO)} de {money(META_TOTAL)} para apoyar a Melany. Consulta el avance y cómo aportar.', html)
+    image_url = f"{URL_BASE}assets/og-portada-auto.png?v={version}"
+    public_url = f"{URL_BASE}?v={version}"
+    description = f"Hemos recaudado {money(RECAUDADO)} de {money(META_TOTAL)}. Consulta el avance y cómo aportar."
+    for attribute, name, value in [
+        ('name', 'description', description),
+        ('property', 'og:description', description),
+        ('property', 'og:image', image_url),
+        ('property', 'og:url', public_url),
+        ('name', 'twitter:image', image_url),
+    ]:
+        html = replace_meta_content(html, attribute, name, value)
+    pattern = r'(<link\s+rel="canonical"\s+href=")[^"]*(">)'
+    html, count = re.subn(pattern, lambda m: m.group(1) + URL_BASE + m.group(2), html, count=1)
+    if count != 1:
+        raise RuntimeError('Falta la etiqueta canonical. No se modificó index.html.')
     INDEX.write_text(html, encoding='utf-8')
 
 RECAUDADO = read_recaudado()
-VERSION = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
+VERSION = str(RECAUDADO)  # La misma cifra conserva la misma version
 img = generate_image(RECAUDADO)
 img.save(ASSETS/'og-portada-auto.png')
 img.convert('RGB').save(ASSETS/'og-portada-auto.jpg', quality=92)
